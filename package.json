@@ -15,6 +15,7 @@
     "cheerio": "^1.2.0",
     "dotenv": "^18.0.10",
     "node-cron": "^4.6.0",
-    "node-zalo-bot": "^0.1.6"
+    "node-zalo-bot": "^0.1.6",
+    "sharp": "^0.35.5"
   }
 }

@@ -124,7 +124,7 @@ module.exports = {
 			`• **RAM:** ${formatGB(usedMem)} / ${formatGB(totalMem)} (**${memPercent}%**)\n` +
 			`• **Ổ cứng (/):** ${disk}\n\n` +
 			`⚙️ {yellow}**TIẾN TRÌNH PM2 (${pm2Lines.length})**{/yellow}\n` +
-			`{green}${pm2Lines.join("\n")}{/green}`;
+			`${pm2Lines.join("\n")}`;
 
 		await bot.sendMessage(chatId, report, { parse_mode: "markdown" });
 	},

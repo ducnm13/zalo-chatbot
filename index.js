@@ -1,21 +1,27 @@
 const ZaloBot = require("node-zalo-bot");
 const fs = require("fs");
 const path = require("path");
-require("dotenv").config();
 const cron = require("node-cron");
 const evn = require("./commands/evn");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
+const nhac = require("./commands/nhac");
 
-const TOKEN = process.env.TOKEN;
+const TOKEN = process.env.TOKEN || "";
+
 const bot = new ZaloBot(TOKEN, {
-	polling: { interval: 1000, autoStart: true },
+	polling: {
+		interval: 1000,
+		autoStart: true,
+	},
 });
 
-// Bỏ qua lỗi timeout 408 của polling
+// 1. Bỏ qua lỗi timeout 408 (bình thường của Long Polling)
 bot.on("polling_error", error => {
 	if (error.message && error.message.includes("408")) return;
 	console.error("Polling error:", error.code, error.message);
 });
-// Tự động đọc tất cả file .js trong thư mục commands/
+
+// 2. Tự động nạp tất cả file .js trong thư mục commands/
 const commandsDir = path.join(__dirname, "commands");
 const commandFiles = fs
 	.readdirSync(commandsDir)
@@ -27,7 +33,6 @@ for (const file of commandFiles) {
 	const command = require(path.join(commandsDir, file));
 	allCommands.push(command);
 
-	// Đăng ký regex của từng lệnh với bot
 	bot.onText(command.regex, async (msg, match) => {
 		try {
 			await command.execute(bot, msg, match, allCommands);
@@ -43,8 +48,8 @@ for (const file of commandFiles) {
 	console.log(`✅ Đã nạp lệnh: ${command.name}`);
 }
 
-// Xử lý khi người dùng gõ lệnh không tồn tại (bắt đầu bằng "/")
-bot.on("message", async msg => {
+// 3. Báo lỗi khi gõ lệnh "/" không tồn tại
+bot.on("text", async msg => {
 	const text = msg.text?.trim();
 	if (!text || !text.startsWith("/")) return;
 
@@ -57,7 +62,10 @@ bot.on("message", async msg => {
 		);
 	}
 });
-// Tự động kiểm tra lịch cúp điện lúc 07:00 sáng mỗi ngày
+// nhắc nhở
+nhac.startLoop(bot);
+
+// 4. Cron Job tự động kiểm tra lịch cúp điện EVNSPC lúc 07:00 sáng mỗi ngày
 cron.schedule(
 	"0 7 * * *",
 	async () => {
@@ -70,8 +78,10 @@ cron.schedule(
 
 			for (const item of list) {
 				try {
-					const { tuNgay, denNgay, hasSchedule, donVi, entries } =
-						await evn.checkLichCupDien(item.code, 3);
+					const { hasSchedule, donVi, entries } = await evn.checkLichCupDien(
+						item.code,
+						3,
+					);
 
 					if (hasSchedule) {
 						const title = item.name
@@ -99,7 +109,6 @@ cron.schedule(
 				}
 			}
 
-			// Chỉ nhắn tin nếu người dùng có ít nhất 1 mã bị cúp điện
 			if (alerts.length > 0) {
 				try {
 					await bot.sendMessage(
@@ -118,4 +127,5 @@ cron.schedule(
 	},
 	{ timezone: "Asia/Ho_Chi_Minh" },
 );
+
 console.log(`🚀 Zalo Bot đang chạy với ${allCommands.length} lệnh...`);
