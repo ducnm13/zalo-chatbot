@@ -14,6 +14,37 @@ const bot = new ZaloBot(TOKEN, {
 		autoStart: true,
 	},
 });
+// Tự động chia nhỏ tin nhắn nếu dài quá 1900 ký tự (Zalo giới hạn 2000)
+const originalSendMessage = bot.sendMessage.bind(bot);
+
+bot.sendMessage = async (chatId, text, options) => {
+	const str = String(text || "");
+	const MAX_LEN = 1900;
+
+	if (str.length <= MAX_LEN) {
+		return originalSendMessage(chatId, str, options);
+	}
+
+	const chunks = [];
+	let remaining = str;
+
+	while (remaining.length > MAX_LEN) {
+		// Ưu tiên cắt tại dấu xuống dòng gần nhất để không bị đứt chữ
+		let cutIndex = remaining.lastIndexOf("\n", MAX_LEN);
+		if (cutIndex === -1 || cutIndex < MAX_LEN / 2) {
+			cutIndex = MAX_LEN;
+		}
+		chunks.push(remaining.slice(0, cutIndex).trim());
+		remaining = remaining.slice(cutIndex).trim();
+	}
+	if (remaining) chunks.push(remaining);
+
+	let lastRes;
+	for (const chunk of chunks) {
+		lastRes = await originalSendMessage(chatId, chunk, options);
+	}
+	return lastRes;
+};
 
 // 1. Bỏ qua lỗi timeout 408 (bình thường của Long Polling)
 bot.on("polling_error", error => {
