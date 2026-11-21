@@ -114,7 +114,7 @@ module.exports = {
 		const [disk, pm2Lines] = await Promise.all([getDiskUsage(), getPM2List()]);
 
 		const report =
-			`🖥️ **THÔNG TIN MÁY CHỦ VPS**\n` +
+			`🖥️ {yellow}**THÔNG TIN MÁY CHỦ VPS**{/yellow}\n` +
 			`• **Host / IP:** ${escapeMarkdown(os.hostname())} (${getServerIP()})\n` +
 			`• **OS:** ${os.type()} ${os.release()} (${os.arch()})\n` +
 			`• **Node.js:** ${process.version}\n` +
@@ -123,8 +123,8 @@ module.exports = {
 			`• **Load Avg (1/5/15p):** ${loadAvg}\n` +
 			`• **RAM:** ${formatGB(usedMem)} / ${formatGB(totalMem)} (**${memPercent}%**)\n` +
 			`• **Ổ cứng (/):** ${disk}\n\n` +
-			`⚙️ **TIẾN TRÌNH PM2 (${pm2Lines.length})**\n` +
-			`${pm2Lines.join("\n")}`;
+			`⚙️ {yellow}**TIẾN TRÌNH PM2 (${pm2Lines.length})**{/yellow}\n` +
+			`{green}${pm2Lines.join("\n")}{/green}`;
 
 		await bot.sendMessage(chatId, report, { parse_mode: "markdown" });
 	},
