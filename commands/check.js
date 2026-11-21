@@ -1,6 +1,12 @@
 const axios = require("axios");
+const https = require("https");
+const { Impit } = require("impit");
 
 const VN_OFFSET = 7 * 60 * 60 * 1000; // UTC+7
+const MAX_ITEMS = 3; // Số mốc hành trình hiển thị tối đa
+
+const insecureAgent = new https.Agent({ rejectUnauthorized: false });
+const spxClient = new Impit({ browser: "chrome" });
 
 const HEADERS = {
 	"User-Agent":
@@ -8,6 +14,7 @@ const HEADERS = {
 	"Accept-Language": "vi-VN,vi;q=0.9",
 };
 
+// Định dạng thời gian gọn: HH:mm DD/MM
 function formatVNTime(unixSeconds) {
 	if (!unixSeconds) return "";
 	const ms = unixSeconds > 1e12 ? unixSeconds : unixSeconds * 1000;
@@ -16,118 +23,157 @@ function formatVNTime(unixSeconds) {
 	const mm = String(d.getUTCMinutes()).padStart(2, "0");
 	const dd = String(d.getUTCDate()).padStart(2, "0");
 	const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
-	const yyyy = d.getUTCFullYear();
-	return `${hh}:${mm} ${dd}/${mo}/${yyyy}`;
+	return `${hh}:${mm} ${dd}/${mo}`;
 }
 
-// Xóa thẻ HTML & khoảng trắng thừa
-function cleanHtml(str) {
-	return (str || "")
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&quot;/g, '"')
-		.replace(/\s+/g, " ")
-		.trim();
+// Tách trọn vẹn nội dung bên trong thẻ <div class="...className...">
+function extractDivByClass(html, className) {
+	const startRegex = new RegExp(
+		`<div[^>]*class="[^"]*${className}[^"]*"[^>]*>`,
+		"i",
+	);
+	const startMatch = startRegex.exec(html);
+	if (!startMatch) return "";
+
+	const startIndex = startMatch.index;
+	const tagRegex = /<\/?div\b[^>]*>/gi;
+	tagRegex.lastIndex = startIndex;
+
+	let depth = 0;
+	let match;
+	while ((match = tagRegex.exec(html)) !== null) {
+		if (match[0].startsWith("</")) {
+			depth--;
+			if (depth === 0) {
+				return html.slice(startIndex, tagRegex.lastIndex);
+			}
+		} else {
+			depth++;
+		}
+	}
+	return html.slice(startIndex, startIndex + 15000);
 }
 
 // 1. Tra cứu Shopee Express (SPX)
 async function checkSPX(code) {
 	const url = `https://spx.vn/shipment/order/open/order/get_order_info?spx_tn=${encodeURIComponent(code)}&language_code=vi`;
-	const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
-	const data = res.data;
+	const trackUrl = `https://spx.vn/track?${encodeURIComponent(code)}`;
 
+	const res = await spxClient.fetch(url, {
+		headers: {
+			Accept: "application/json, text/plain, */*",
+			"Accept-Language": "vi-VN,vi;q=0.9",
+			Referer: "https://spx.vn/track",
+			Origin: "https://spx.vn",
+		},
+	});
+
+	if (res.status === 403) {
+		return (
+			`⚠️ SPX đang chặn truy cập tự động (403).\n` +
+			`🔗 Xem trực tiếp: ${trackUrl}`
+		);
+	}
+
+	if (!res.ok) {
+		throw new Error(`SPX trả về mã lỗi ${res.status}`);
+	}
+
+	const data = await res.json();
 	if (!data || data.retcode !== 0 || !data.data?.sls_tracking_info) {
 		return `⚠️ Không tìm thấy vận đơn SPX **${code}**.`;
 	}
 
-	const info = data.data.sls_tracking_info;
-	const records = info.records || [];
-
+	const records = data.data.sls_tracking_info.records || [];
 	if (records.length === 0) {
-		return `📦 **SPX: ${code}**\nChưa có thông tin hành trình.`;
+		return `**SPX: ${code}**\nChưa có thông tin hành trình.\n🔗 ${trackUrl}`;
 	}
 
-	// Lấy tối đa 8 mốc gần nhất để tin nhắn gọn
-	const lines = records.slice(0, 8).map((r, i) => {
+	const lines = records.slice(0, MAX_ITEMS).map((r, i) => {
 		const time = formatVNTime(r.actual_time);
-		const desc = r.buyer_description || r.description || "Đang cập nhật";
-		const loc = r.current_location?.location_name
-			? ` _(${r.current_location.location_name})_`
-			: "";
-		const icon = i === 0 ? "🟢" : "▫️";
-		return `${icon} **${time}**\n   ${desc}${loc}`;
+		const desc = (
+			r.buyer_description ||
+			r.description ||
+			"Đang cập nhật"
+		).trim();
+		const icon = i === 0 ? "-" : "-";
+		return `${icon} **${time}**: ${desc}`;
 	});
 
 	return (
-		`📦 **HÀNH TRÌNH SPX: ${code}**\n` +
-		`(Hiển thị ${lines.length}/${records.length} mốc mới nhất)\n\n` +
-		lines.join("\n\n")
+		`{yellow}**SPX: ${code}**{/yellow} (${lines.length}/${records.length})\n` +
+		lines.join("\n") +
+		`\n${trackUrl}`
 	);
 }
 
 // 2. Tra cứu J&T Express
 async function checkJT(code, phone) {
 	const url = `https://jtexpress.vn/vi/tracking?type=track&billcode=${encodeURIComponent(code)}&cellphone=${encodeURIComponent(phone)}`;
-	const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
-	const html = typeof res.data === "string" ? res.data : "";
+	const res = await axios.get(url, {
+		headers: HEADERS,
+		timeout: 15000,
+		httpsAgent: insecureAgent,
+	});
 
+	const html = typeof res.data === "string" ? res.data : "";
 	if (!html) {
 		return `⚠️ Không tải được dữ liệu J&T cho mã **${code}**.`;
 	}
 
-	// Kiểm tra trường hợp không tìm thấy hoặc sai 4 số cuối SĐT
-	if (/không tìm thấy|không có dữ liệu|vui lòng kiểm tra lại/i.test(html)) {
-		return `⚠️ Không tìm thấy vận đơn J&T **${code}** (kiểm tra lại mã hoặc 4 số cuối SĐT **${phone}**).`;
+	const block = extractDivByClass(html, "result-tracking");
+	if (!block) {
+		return `⚠️ Không tìm thấy khối kết quả J&T cho mã **${code}**.\n🔗 ${url}`;
 	}
 
-	// Bóc tách các khối hành trình từ HTML trang tracking của J&T
+	const text = block
+		.replace(/<script[\s\S]*?<\/script>/gi, "")
+		.replace(/<style[\s\S]*?<\/style>/gi, "")
+		.replace(/<\/(div|p|li|tr|h[1-6])[^>]*>|<br\s*\/?>/gi, "\n")
+		.replace(/<[^>]+>/g, " ")
+		.replace(/&nbsp;/g, " ")
+		.replace(/&amp;/g, "&")
+		.replace(/&quot;/g, '"');
+
+	const lines = text
+		.split("\n")
+		.map(l => l.replace(/\s+/g, " ").trim())
+		.filter(l => l.length > 0 && l !== code);
+
+	if (lines.length === 0) {
+		return `⚠️ Không có dữ liệu hành trình cho mã **${code}** (kiểm tra lại mã hoặc 4 số cuối SĐT **${phone}**).`;
+	}
+
+	// Gom nhóm theo cấu trúc: Giờ (HH:mm:ss) -> Ngày (YYYY-MM-DD) -> Nội dung
 	const entries = [];
-	const itemRegex =
-		/<div[^>]*class="[^"]*result-vandon-item[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
-	let match;
+	for (let i = 0; i < lines.length; i++) {
+		const isTime = /^\d{2}:\d{2}:\d{2}$/.test(lines[i]);
+		const isDate = /^\d{4}-\d{2}-\d{2}$/.test(lines[i + 1] || "");
 
-	while ((match = itemRegex.exec(html)) !== null) {
-		const text = cleanHtml(match[1]);
-		if (text) entries.push(text);
+		if (isTime && isDate && lines[i + 2]) {
+			const [, mm, dd] = lines[i + 1].split("-");
+			const timeShort = lines[i].slice(0, 5);
+			entries.push({
+				time: `${timeShort} ${dd}/${mm}`,
+				desc: lines[i + 2],
+			});
+			i += 2;
+		}
 	}
 
-	// Dự phòng: nếu J&T đổi class HTML, bóc theo định dạng ngày giờ (YYYY-MM-DD HH:mm:ss hoặc DD/MM/YYYY HH:mm)
-	if (entries.length === 0) {
-		const plain = html
-			.replace(/<script[\s\S]*?<\/script>/gi, "")
-			.replace(/<style[\s\S]*?<\/style>/gi, "")
-			.replace(/<\/(div|p|li|tr|br)[^>]*>/gi, "\n")
-			.replace(/<[^>]+>/g, " ");
-
-		const lines = plain
-			.split("\n")
-			.map(l => l.replace(/\s+/g, " ").trim())
-			.filter(
-				l => /\d{2}[:/-]\d{2}/.test(l) && l.length > 15 && l.length < 300,
-			);
-
-		entries.push(...lines.slice(0, 8));
+	let body;
+	if (entries.length > 0) {
+		const recent = entries.slice(0, MAX_ITEMS);
+		body =
+			`(${recent.length}/${entries.length})\n` +
+			recent
+				.map((e, idx) => `${idx === 0 ? "-" : "-"} **${e.time}**: ${e.desc}`)
+				.join("\n");
+	} else {
+		body = "\n" + lines.slice(0, 5).join("\n");
 	}
 
-	if (entries.length === 0) {
-		return (
-			`📦 **J&T: ${code}**\n` +
-			`Không bóc tách được hành trình tự động (J&T có thể đã đổi giao diện hoặc yêu cầu captcha).\n` +
-			`🔗 Xem trực tiếp: ${url}`
-		);
-	}
-
-	const formatted = entries.slice(0, 8).map((item, i) => {
-		const icon = i === 0 ? "🟢" : "▫️";
-		return `${icon} ${item}`;
-	});
-
-	return (
-		`📦 **HÀNH TRÌNH J&T: ${code}**\n\n` +
-		formatted.join("\n\n") +
-		`\n\n🔗 ${url}`
-	);
+	return `{yellow}**J&T: ${code}**{/yellow} ${body}\n${url}`;
 }
 
 module.exports = {
@@ -149,7 +195,6 @@ module.exports = {
 			);
 		}
 
-		// Tách tham số và loại bỏ dấu ngoặc kép/đơn nếu người dùng gõ kèm
 		const args = rawArgs
 			.split(/\s+/)
 			.map(s => s.replace(/^["']|["']$/g, "").trim())
@@ -165,9 +210,7 @@ module.exports = {
 					return bot.sendMessage(
 						chatId,
 						"⚠️ Thiếu mã vận đơn. VD: `/check spx SPXVN123456`",
-						{
-							parse_mode: "markdown",
-						},
+						{ parse_mode: "markdown" },
 					);
 				}
 				const reply = await checkSPX(code);
