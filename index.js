@@ -2,6 +2,8 @@ const ZaloBot = require("node-zalo-bot");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
+const cron = require("node-cron");
+const evn = require("./commands/evn");
 
 const TOKEN = process.env.TOKEN;
 const bot = new ZaloBot(TOKEN, {
@@ -55,5 +57,65 @@ bot.on("message", async msg => {
 		);
 	}
 });
+// Tự động kiểm tra lịch cúp điện lúc 07:00 sáng mỗi ngày
+cron.schedule(
+	"0 7 * * *",
+	async () => {
+		console.log("⏰ Đang chạy cron kiểm tra lịch cúp điện EVNSPC...");
+		const users = evn.loadUsers();
 
+		for (const chatId of Object.keys(users)) {
+			const list = evn.getUserCodes(chatId);
+			const alerts = [];
+
+			for (const item of list) {
+				try {
+					const { tuNgay, denNgay, hasSchedule, donVi, entries } =
+						await evn.checkLichCupDien(item.code, 3);
+
+					if (hasSchedule) {
+						const title = item.name
+							? `**${evn.escapeMarkdown(item.name)}** _(${item.code})_`
+							: `**${item.code}**`;
+
+						const details = entries
+							.map(
+								(e, i) =>
+									`🔸 **Lịch ${i + 1}:**\n` +
+									`• ⏰ ${evn.escapeMarkdown(e.thoiGian)}\n` +
+									`• 📍 ${evn.escapeMarkdown(e.khuVuc)}\n` +
+									`• 🔧 ${evn.escapeMarkdown(e.lyDo)}`,
+							)
+							.join("\n\n");
+
+						alerts.push(
+							`⚡ ${title}\n` +
+								(donVi ? `🏢 Đơn vị: _${evn.escapeMarkdown(donVi)}_\n` : "") +
+								`\n${details}`,
+						);
+					}
+				} catch (err) {
+					console.error(`Lỗi cron EVN cho mã ${item.code}:`, err.message);
+				}
+			}
+
+			// Chỉ nhắn tin nếu người dùng có ít nhất 1 mã bị cúp điện
+			if (alerts.length > 0) {
+				try {
+					await bot.sendMessage(
+						chatId,
+						`🔔 **CẢNH BÁO LỊCH CẮT ĐIỆN TỰ ĐỘNG**\n\n${alerts.join("\n\n──────────────\n\n")}`,
+						{ parse_mode: "markdown" },
+					);
+				} catch (sendErr) {
+					console.error(
+						`Không gửi được cảnh báo cho ${chatId}:`,
+						sendErr.message,
+					);
+				}
+			}
+		}
+	},
+	{ timezone: "Asia/Ho_Chi_Minh" },
+);
 console.log(`🚀 Zalo Bot đang chạy với ${allCommands.length} lệnh...`);
