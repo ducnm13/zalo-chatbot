@@ -84,18 +84,16 @@ async function checkSPX(code) {
 		return `⚠️ Không tìm thấy vận đơn SPX **${code}**.`;
 	}
 
-	const records = data.data.sls_tracking_info.records || [];
+	const allRecords = data.data.sls_tracking_info.records || [];
+	const visibleRecords = allRecords.filter(r => r.display_flag === 1);
+	const records = visibleRecords.length > 0 ? visibleRecords : allRecords;
 	if (records.length === 0) {
 		return `**SPX: ${code}**\nChưa có thông tin hành trình.\n🔗 ${trackUrl}`;
 	}
 
 	const lines = records.slice(0, MAX_ITEMS).map((r, i) => {
 		const time = formatVNTime(r.actual_time);
-		const desc = (
-			r.buyer_description ||
-			r.description ||
-			"Đang cập nhật"
-		).trim();
+		const desc = (r.description || "Đang cập nhật").trim();
 		const icon = i === 0 ? "-" : "-";
 		return `${icon} **${time}**: ${desc}`;
 	});
