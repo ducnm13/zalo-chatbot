@@ -1,5 +1,4 @@
 const axios = require("axios");
-require("dotenv").config();
 const sharp = require("sharp");
 
 // 1. Cấu hình thông tin ngân hàng của bạn
@@ -101,7 +100,6 @@ module.exports = {
 			});
 
 			const data = await res.json();
-			console.log("📦 Phản hồi Zalo:", data);
 
 			if (!res.ok || data.ok === false) {
 				await bot.sendMessage(chatId, `${caption}\n\n🔗 ${qrUrl}`);

@@ -153,6 +153,11 @@ cron.schedule(
 						sendErr.message,
 					);
 				}
+			} else {
+				await bot.sendMessage(
+					chatId,
+					"Sáng nay không có lịch cắt điện nào trong 3 ngày tới.",
+				);
 			}
 		}
 	},
